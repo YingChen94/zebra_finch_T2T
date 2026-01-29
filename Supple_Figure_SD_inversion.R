@@ -1407,8 +1407,108 @@ print(pD)
 
 
 
+# -----------------------------------------------------------------------------
+# Plot E: visualize chrZ inversion and SD
+# -----------------------------------------------------------------------------
+# All chrZ inversions, no distance filtering
 
+# Start from results$wide to get ALL chrZ inversions, not just those with flanking pairs
+chrZ_all <- results$wide %>%
+  filter(category == "chrZ") %>%
+  # Keep inversions that have flanking pair OR closest SD within 10kb
+  filter(!is.na(flanking_max_dist) | upstream_dist < 10000 | downstream_dist < 10000)
 
+# Prepare data similar to what plot_inversion_sd_locus does
+plot_data_expanded <- chrZ_all %>%
+  mutate(
+    # Calculate sizes
+    inv_length = end - start,
+    inv_half = inv_length / 2,
+    inv_center = (start + end) / 2,
+    
+    # Flanking SD positions relative to inversion center (NA if no flanking pair)
+    sd1_rel_start = flanking_pair_start1 - inv_center,
+    sd1_rel_end = flanking_pair_end1 - inv_center,
+    sd2_rel_start = flanking_pair_start2 - inv_center,
+    sd2_rel_end = flanking_pair_end2 - inv_center,
+    
+    # Check if upstream/downstream SD pair is same as flanking SD pair
+    upstream_is_flanking = (!is.na(flanking_pair_start1) &
+                              upstream_pair_start1 == flanking_pair_start1 & 
+                              upstream_pair_end1 == flanking_pair_end1 &
+                              upstream_pair_start2 == flanking_pair_start2 & 
+                              upstream_pair_end2 == flanking_pair_end2),
+    
+    downstream_is_flanking = (!is.na(flanking_pair_start1) &
+                                downstream_pair_start1 == flanking_pair_start1 & 
+                                downstream_pair_end1 == flanking_pair_end1 &
+                                downstream_pair_start2 == flanking_pair_start2 & 
+                                downstream_pair_end2 == flanking_pair_end2),
+    
+    # Closest upstream SD position (only if distance < 10kb AND not same as flanking)
+    closest_upstream_pos = case_when(
+      upstream_is_flanking ~ NA_real_,
+      upstream_dist < 10000 & upstream_which == "SD1" ~ upstream_pair_end1 - inv_center,
+      upstream_dist < 10000 & upstream_which == "SD2" ~ upstream_pair_end2 - inv_center,
+      TRUE ~ NA_real_
+    ),
+    
+    # Closest downstream SD position (only if distance < 10kb AND not same as flanking)
+    closest_downstream_pos = case_when(
+      downstream_is_flanking ~ NA_real_,
+      downstream_dist < 10000 & downstream_which == "SD1" ~ downstream_pair_start1 - inv_center,
+      downstream_dist < 10000 & downstream_which == "SD2" ~ downstream_pair_start2 - inv_center,
+      TRUE ~ NA_real_
+    ),
+    
+    # Arrow directions for flanking SDs
+    is_inverted = flanking_pair_orientation %in% c("-", "inverted", "inv"),
+    sd1_arrow_y = sd1_rel_start,
+    sd1_arrow_yend = sd1_rel_end,
+    sd2_arrow_y = if_else(is_inverted, sd2_rel_end, sd2_rel_start),
+    sd2_arrow_yend = if_else(is_inverted, sd2_rel_start, sd2_rel_end),
+    
+    # Create label
+    inv_label = paste0("(", scales::comma(start), ", ", scales::comma(end), ")")
+  ) %>%
+  # Order by inversion size (small on top)
+  arrange(desc(inv_length)) %>%
+  mutate(inv_label = factor(inv_label, levels = inv_label))
+
+# Build the plot
+pE <- ggplot(plot_data_expanded, aes(x = inv_label)) +
+  # Center line at 0
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray70") +
+  # Inversion bar
+  geom_linerange(aes(ymin = -inv_half, ymax = inv_half), 
+                 color = "#CC79A7", linewidth = 3, alpha = 0.8) +
+  # SD1 arrow (upstream/5' side) - only if flanking pair exists
+  geom_segment(aes(xend = inv_label, y = sd1_arrow_y, yend = sd1_arrow_yend),
+               color = "gray30", linewidth = 0.8, alpha = 0.6,
+               arrow = arrow(length = unit(0.08, "inches"), type = "closed"),
+               na.rm = TRUE) +
+  # SD2 arrow (downstream/3' side) - only if flanking pair exists
+  geom_segment(aes(xend = inv_label, y = sd2_arrow_y, yend = sd2_arrow_yend),
+               color = "gray30", linewidth = 0.8, alpha = 0.6,
+               arrow = arrow(length = unit(0.08, "inches"), type = "closed"),
+               na.rm = TRUE) +
+  # Closest upstream SD (open circle)
+  geom_point(aes(y = closest_upstream_pos), color = "grey30", shape = 1, size = 2, stroke = 1, na.rm = TRUE) +
+  # Closest downstream SD (open circle)
+  geom_point(aes(y = closest_downstream_pos), color = "grey30", shape = 1, size = 2, stroke = 1, na.rm = TRUE) +
+  scale_y_continuous(labels = scales::label_number(scale_cut = scales::cut_short_scale())) +
+  coord_flip() +
+  labs(
+    x = "Inversion position (start, end)",
+    y = "Relative position to inversion center on chrZ (bp)"
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    panel.grid.minor = element_blank()
+  )
+
+print(pE)
 
 
 
@@ -1427,21 +1527,24 @@ pA_noleg <- pA + theme(legend.position = "none",axis.title.x = element_blank()) 
 pB_noleg <- pB + theme(legend.position = "none") + theme(plot.margin = margin(t = 5, r = 5, b = 10, l = 10))
 pC_noleg <- pC$plot + theme(legend.position = "none") + theme(plot.margin = margin(t = 10, r = 10, b = 5, l = 5))
 pD_noleg <- pD + theme(legend.position = "none") + theme(plot.margin = margin(t = 10, r = 5, b = 5, l = 10))
-
+pE_noleg <- pE + theme(legend.position = "none") + 
+  theme(plot.margin = margin(t = 10, r = 10, b = 5, l = 5))
 
 # Extract legend from one plot - use "right" position
 legend <- get_legend(pA + theme(legend.position = "right"))
 
-
 top_row <- plot_grid(pA_noleg, pB_noleg, labels = c("A", "B"), ncol = 2, align = "h")
-bottom_row <- plot_grid(pD_noleg, pC_noleg, labels = c("C", "D"), ncol = 2, align = "h")
+middle_row <- plot_grid(pD_noleg, pC_noleg, labels = c("C", "D"), ncol = 2, align = "h")
+bottom_row <- plot_grid(pE_noleg, labels = c("E"), ncol = 1)
 
-# Don't align between rows
+# Combine all rows
 plots_combined <- plot_grid(
   top_row,
+  middle_row,
   bottom_row,
   ncol = 1,
-  align = "none"  # no vertical alignment between rows
+  align = "none",
+  rel_heights = c(1, 1, 1)  # Adjust relative heights as needed
 )
 
 combined_plot <- plot_grid(
@@ -1452,8 +1555,9 @@ combined_plot <- plot_grid(
 )
 
 combined_plot
-ggsave("Suuple_Figure.svg", combined_plot, width = 11, height = 8)
-ggsave("Suuple_Figure.png", combined_plot, width = 11, height = 8)
+
+ggsave("Suuple_Figure.svg", combined_plot, width = 11, height = 9.5)
+ggsave("Suuple_Figure.png", combined_plot, width = 11, height = 9.5)
 # done
 
 
